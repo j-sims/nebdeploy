@@ -1,0 +1,9 @@
+{ "nebula.service":
+    {  
+        "filename": "nebula.service",
+        "srcpath" : "payload",
+        "dstpath" : "/etc/systemd/system",
+        "mode"    : 644,
+        "owner"   : "root"
+    }
+}

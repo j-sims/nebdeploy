@@ -1,0 +1,36 @@
+{
+    "bindir": "/opt/nebula/bin",
+    "etcdir": "/opt/nebula/etc",
+    "hosts": {
+        "lighthouse": {
+            "address": "192.168.1.100",
+            "nebulaaddress": "10.10.10.10",
+            "password": "SecretPass",
+            "platform": "linux",
+            "startupmethod": "systemd",
+            "sudo": true,
+            "lighthouse": true,
+            "username": "user1"
+        },
+        "server": {
+            "address": "192.168.1.110",
+            "nebulaaddress": "10.10.10.20",
+            "password": "SecretPass",
+            "platform": "linux",
+            "startupmethod": "systemd",
+            "sudo": true,
+            "lighthouse": false,
+            "username": "user1"
+        },
+        "laptop": {
+            "address": "192.168.1.120",
+            "nebulaaddress": "10.10.10.30",
+            "password": "SecretPass",
+            "platform": "linux",
+            "startupmethod": "systemd",
+            "sudo": true,
+            "lighthouse": false,
+            "username": "user1"
+        }
+    }
+}
