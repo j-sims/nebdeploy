@@ -1,25 +1,25 @@
 {
-
     "supported_os": [
         {
-            "linux": [
-                "amd64"
-            ]
+            "Linux": {
+                "arch": [
+                    "amd64"
+                ],
+                "distro": [
+                    "ubuntu"
+                ]
+            }
         },
         {
-            "freebsd": [
-                "amd64"
-            ]
-        },
-        {
-            "Isilon Onefs": [
-                "amd64"
-            ]
+            "Isilon OneFS": {
+                "arch": [
+                    "amd64"
+                ],
+                "distro": []
+            }
         }
     ],
-    "supported_distros": [
-        "ubuntu"
-    ],
+    "tmpdir": "/tmp/nebdeploy",
     "bindir": "/opt/nebula/bin",
     "debug": false,
     "etcdir": "/opt/nebula/etc",
