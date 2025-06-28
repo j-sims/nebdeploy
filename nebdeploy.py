@@ -13,35 +13,89 @@ import getpass
 import venv
 import socket
 import time
+import copy
 
-# Configure logging
-logging.basicConfig(filename='nebdeploy.log', level=logging.DEBUG,
-                    format='%(asctime)s - %(message)s - %(levelname)s')  # Adjusted format
-logging.Formatter.converter = time.gmtime  # Log in UTC
+os.environ['PYTHONUNBUFFERED'] = '1'
 
-
-# Get hostname
-hostname = socket.gethostname()
-logging.info(f"Script started on host: {hostname}")
-
-nebplatforms = [ ]
-freebsd = "https://github.com/slackhq/nebula/releases/download/v1.9.5/nebula-freebsd-amd64.tar.gz"
-linux = "https://github.com/slackhq/nebula/releases/download/v1.9.5/nebula-linux-amd64.tar.gz"
-nebplatforms = [ freebsd, linux ]
-
+logging.basicConfig(filename='nebdeploy.log', level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(lineno)d - %(message)s')
+logging.info("======================================= Startup =======================================")
 required_modules = ['requests', 'paramiko', 'scp', 'yaml']
-supported_os = [ "linux", "freebsd", "isilon onefs"]
+
+def set_mode(args):
+    global mode
+    if args.preinstall:
+        mode = "preinstall"
+    elif args.uninstall:
+        mode = "uninstall"
+    elif args.running:
+        mode = "running"
+    elif args.install:
+        mode = "install"
+    else:
+        mode = "usage"
+    
 
 class NebulaDeployUtil:
+
+    class UnsupportedDistro(Exception):
+        pass
+
+    class UnsupportedOS(Exception):
+        pass
+    
+    class UnsupportedArch(Exception):
+        pass
+    
+    class UnreachableHost(Exception):
+        pass
+
+    class FailedToRunAsRoot(Exception):
+        pass
+
+    class ErrorGeneratingHostCertificate(Exception):
+        pass
+
     def __init__(self, config_file: str):
         self.check_and_create_venv()
         self.check_and_install_modules()
         self.config = self.read_json_file(config_file)
+        for host in self.get_hosts():
+            self.config['hosts'][host]['store_password'] = True
+            if 'password'  not in self.config['hosts'][host]:
+                self.config['hosts'][host]['store_password'] = False
+            
+            self.config['hosts'][host]['store_username'] = True
+            if 'username'  not in self.config['hosts'][host]:
+                self.config['hosts'][host]['store_username'] = False
+
+        if self.config.get('debug', False):
+            logging.getLogger().setLevel(logging.DEBUG)
+            logging.debug("Debug logging enabled.")
+
         self.configyml = self.download_config()
         logging.info("Default configuration downloaded successfully.")
+
         self.active_host = {}
-        self.ssh_client = None
-        self.use_sudo = False  
+        self.ssh_client = None 
+        logging.info(f"LogLevel set to: {logging.getLogger().level}")
+
+    def check_reachability(self):
+        address = self.active_host['address']
+        response = os.system(f"ping -c 1 {address} > /dev/null")
+        if response != 0:
+            logging.warning(f"Host {address} is not reachable.")
+            raise self.UnreachableHost(f"{self.active_host['name']}:{address} is unreachable.")
+        logging.info(f"Host {address} is reachable.")
+
+    def get_hosts(self):
+        enabled_hosts = [
+            host for host, config in self.config['hosts'].items()
+            if not config.get('disabled', False)
+        ]
+
+        enabled_hosts.sort(key=lambda host: self.config['hosts'][host].get('lighthouse', False), reverse=True)
+        return enabled_hosts
 
     def download_config(self):
         url = "https://raw.githubusercontent.com/slackhq/nebula/master/examples/config.yml"
@@ -53,6 +107,24 @@ class NebulaDeployUtil:
         except Exception as e:
             logging.error(f"Failed to download default configuration: {e}")
             raise
+
+    def write_config_to_file(self):
+        logging.info("Writing config to config.json")
+        for host in self.get_hosts():                
+            if not self.config['hosts'][host]['store_password']:
+                del self.config['hosts'][host]['password']
+            del self.config['hosts'][host]['store_password']
+            
+            if not self.config['hosts'][host]['store_username']:
+                del self.config['hosts'][host]['username']
+            del self.config['hosts'][host]['store_username']
+
+        try:
+            with open('config.json', 'w') as json_file:
+                json.dump(self.config, json_file, indent=4)
+                logging.info("Configuration written to config.json successfully.")
+        except Exception as e:
+            logging.error(f"Failed to write configuration to file: {e}")
 
     def read_json_file(self, filepath: str) -> Dict[str, Any]:
         with open(filepath, 'r') as json_file:
@@ -92,182 +164,164 @@ class NebulaDeployUtil:
                     sys.exit(1)
 
     def ensure_credentials(self):
-        for host in self.config['hosts'].values():
-            self.prompt_for_credentials(host)
+        for host in self.get_hosts():
+            if 'username' not in self.config['hosts'][host]:
+                logging.warning(f"Username not defined for host {host}. Prompting user.")
+                print(f"Username not defined for host {host}.", flush=True)
+                username = input("Please enter the username: ")
+                self.config['hosts'][host]['username'] = username  # Store the entered username
 
-    def prompt_for_credentials(self, host):
-        username = host.get('username')
-        password = host.get('password')
-
-        if not username:
-            logging.warning(f"Username not defined for host {host['address']}. Prompting user.")
-            print(f"Username not defined for host {host['address']}.")
-            username = input("Please enter the username: ")
-            host['username'] = username  # Store the entered username
-
-        if not password:
-            logging.warning(f"Password not defined for user {username} on host {host['address']}. Prompting user.")
-            print(f"Password not defined for user {username} on host {host['address']}.")
-            password = getpass.getpass(f"Please enter the password for {username}: ")
-            host['password'] = password
+            if 'password' not in self.config['hosts'][host]:
+                logging.warning(f"Password not defined for user {username} on host {host}. Prompting user.")
+                print(f"Password not defined for user {username} on host {host}.", flush=True)
+                password = getpass.getpass(f"Please enter the password for {username}: ")
+                self.config['hosts'][host]['password'] = password
     
-    def uninstall(self):
-        for host in self.config['hosts']:
-            self.active_host = {**{"name": host}, **self.config['hosts'][host] }
-            print(f"Host: {self.active_host['name']}")
-            if not self.ssh_client:
-                self.ssh_client = self.create_ssh_client(self.config['hosts'][host]['address'], 22, self.config['hosts'][host]['username'], self.config['hosts'][host]['password'])
-            self.removetmpdirs()
+    def set_active_host(self, host):
+        self.ssh_client = self.create_ssh_client(self.config['hosts'][host]['address'], 22, self.config['hosts'][host]['username'], self.config['hosts'][host]['password'])
+        self.active_host = {**{"name": host}, **self.config['hosts'][host] }
+        print(f"Host: {self.active_host['name']}:\t", end='', flush=True)
+        logging.info(f"Host: {self.active_host['name']}")    
 
-    def install(self):
-        task_queue = queue.Queue()
-        logging.info("Starting download...")
-        threads = []
-        
-        for url in nebplatforms:
-            dest_path = os.path.join(os.getcwd(), os.path.basename(url))
-            download_thread = threading.Thread(target=self.download_file, args=(url, dest_path))
-            threads.append(download_thread)
-            download_thread.start()
+    def removebindir(self):
+        logging.info(f"Removing bindir {self.config['bindir']} on {self.active_host['name']}...")
+        command = f"rm -rf {self.config['bindir']}"
+        self.execute_command(command)
+        logging.info(f"Removed bindir {self.config['bindir']} on {self.active_host['name']}.")
 
-        for thread in threads:
-            thread.join()
+    def removeetcdir(self):
+        logging.info(f"Removing etcdir {self.config['etcdir']} on {self.active_host['name']}...")
+        command = f"rm -rf {self.config['etcdir']}"
+        self.execute_command(command)
+        logging.info(f"Removed etcdir {self.config['etcdir']} on {self.active_host['name']}.")
 
-        logging.info("All downloads completed.")
-
-        logging.info("Reading Config...")
-        
-        logging.info("Starting host setup")
-        for host in self.config['hosts']:
-            self.active_host = {**{"name": host}, **self.config['hosts'][host] }
-            print(f"Host: {self.active_host['name']}")
-            if self.ssh_client is None or self.ssh_client.get_transport() is None or not self.ssh_client.get_transport().is_active():
-                self.ssh_client = self.create_ssh_client(self.config['hosts'][host]['address'], 22, self.config['hosts'][host]['username'], self.config['hosts'][host]['password'])
-            self.check_distribution()
-
-            if self.config['hosts'][host]['sudo']:
-                self.use_sudo = True
+    def identify_host(self):
+        self.active_host['os_name'] = self.execute_command(f"uname")
+        self.active_host['arch'] = self.execute_command(f"uname -i")
+        self.active_host['proc'] = self.execute_command(f"uname -p")
+ 
+    def transfer_tarball(self):
+        logging.info(f"Active Host: {self.active_host}")
+        if self.active_host['os_name'] == "Linux":
+            if self.active_host['arch'] == "x86_64": 
+                self.active_host['arch'] = "amd64"
+                self.active_host['os_name']=self.active_host['os_name'].lower()
             else:
-                self.use_sudo = False
-            logging.info(f"Selecting Host: {host}:{self.config['hosts'][host]}")
-            if not self.ssh_client:
-                self.ssh_client = self.create_ssh_client(self.config['hosts'][host]['address'], 22, self.config['hosts'][host]['username'], self.config['hosts'][host]['password'])
-            self.create_directories()
-            import scp
-            with scp.SCPClient(self.ssh_client.get_transport()) as scp_client:
-                for url in nebplatforms:
-                    tarball_name = os.path.basename(url)
-                    scp_client.put(tarball_name, '/tmp/' + tarball_name)
-                    logging.info(f"Transferred {tarball_name} to {self.config['hosts'][host]['address']}/tmp/")
-            self.extract_tarballs()
-            #self.check_ping(self.config['hosts'][host]['address'])
+                raise self.UnsupportedArch(f"Unsupported Architecture: {arch}")
+        elif self.active_host['os_name'] == "Isilon OneFS":
+            self.active_host['os_name'] = "freebsd"
+            self.active_host['arch'] = self.active_host['proc']
+        else:
+            raise self.UnsupportedOS(f"Unsupported OS: {self.active_host['os_name']}")
+        tarball_name = f"nebula-{self.active_host['os_name']}-{self.active_host['arch']}.tar.gz"
+        self.scp_to_directory(os.path.join(os.getcwd(), tarball_name), self.config['tmpdir'])
+        return tarball_name
 
-            timestamp = time.strftime("%Y%m%d%H%M%S")
-            temp_dir = self.create_temp_directory(timestamp)
-            self.scp_to_temp_directory(os.path.join(os.getcwd(), 'payload', 'nebula.service'), temp_dir)
-            self.copy_to_target_location(temp_dir, self.config['etcdir'])
-            self.set_permissions(self.config['etcdir'], {'owner': 'nobody', 'mode': '755'})
+    def check_run_as_root(self):
+        command = "whoami"
+        logging.info("Checking if the script is running as root...")
+        user = self.execute_command(command)
+        logging.debug(f"user: {user}")
+        if user != "root":
+            logging.error(f"Script is not running as root, current user: {user}")
+            raise self.FailedToRunAsRoot("The script must be run as root.")
+        logging.info("Script is running as root.")
+        
+    def set_host_status(self, state, error=""):
+        self.config['hosts'][self.active_host['name']]["state"] = state
+        self.config['hosts'][self.active_host['name']]["statetimestamp"] = time.time()
+        self.config['hosts'][self.active_host['name']]['error'] = error
+        if error:
+            logging.info(f"Install error on {self.active_host['name']} - {error}")
+            print(f"Install error on {self.active_host['name']} - {error}")
+            print("\033[91m✘ Failed\033[0m")
 
-            logging.info(f"Finished setup for host: {host}")
-
-    def execute_commands(self, commands):
-        if self.active_host.get('sudo', False): 
-            use_sudo = True
-        else: 
-            use_sudo = False
-        sudo_prefix = "sudo " if use_sudo else ""
-        for command in commands:
-            logging.debug(f"Executing command: {sudo_prefix + command}")
-            try:
-                if use_sudo:
-                    channel = self.ssh_client.invoke_shell()
-                    time.sleep(1)
-                    channel.send(sudo_prefix + command + '\n')
-                    time.sleep(1)
-                    if channel.recv_ready():
-                        output = channel.recv(1024).decode()
-                        if 'password' in output.lower():
-                            channel.send(self.active_host['password'] + '\n')  # Send password
-                            time.sleep(1)
-                        while channel.recv_ready():
-                            channel.recv(1024)  # discard output
-                            time.sleep(0.1)
-                else:
-                    stdin, stdout, stderr = self.ssh_client.exec_command(sudo_prefix + command)
-                    out = stdout.read().decode()
-                    err = stderr.read().decode()
-                    if out:
-                        logging.info(f"Command output: {out}")
-                    if err:
-                        logging.error(f"Command error: {err}")
-                        print(f"Command: {sudo_prefix + command}")
-                        print(f"Command error: {err}")
-                        raise Exception(f"Command execution failed: {command}, Error: {err}")
-            except Exception as e:
-                logging.error(f"Error executing command: {command}, Exception: {e}")
-                raise
-
-    def create_temp_directory(self, timestamp):
-        temp_dir = f"/tmp/{timestamp}-nebdeploy"
-        self.execute_commands([f"mkdir -p {temp_dir}"])
-        logging.info(f"Created temporary directory: {temp_dir}")
-        self.set_permissions(temp_dir, { "owner":self.active_host["username"], "mode": 777 } )
-        return temp_dir
-
-    def scp_to_temp_directory(self, filename, temp_dir):
-        import scp
-        with scp.SCPClient(self.ssh_client.get_transport()) as scp_client:
-            scp_client.put(filename, f"{temp_dir}/{os.path.basename(filename)}")
-            logging.info(f"Transferred {filename} to {temp_dir}/")
-
-    def copy_to_target_location(self, temp_dir, target_path):
-        commands = [
-            f"cp {temp_dir}/* {target_path}/"
-        ]
-        self.execute_commands(commands)
-
-    def set_permissions(self, target_path, permissions):
-        commands = [
-            f"chown {permissions['owner']} {target_path}",
-            f"chmod {permissions['mode']} {target_path}"
-        ]
-        self.execute_commands(commands)
-
-    def removetmpdirs(self):
-        logging.info(f"Checking for existing nebdeploy directories on {self.active_host['name']}...")
-        check_command = "ls /tmp/*-nebdeploy 2>/dev/null"
+    def execute_command(self, command, timeout=30):
         try:
-            stdin, stdout, stderr = self.ssh_client.exec_command(check_command)
-            existing_dirs = stdout.read().decode().strip()
-            
-            if existing_dirs:
-                logging.info(f"Found existing nebdeploy directories: {existing_dirs}. Removing...")
-                command = "rm -rf /tmp/*-nebdeploy"
-                self.execute_commands([command])
-                logging.info(f"Removed nebdeploy directories from {self.active_host['name']}.")
-            else:
-                logging.info(f"No nebdeploy directories found on {self.active_host['name']}. Skipping removal.")
-        except Exception as e:
-            logging.error(f"Error checking/removing tmp dirs: {e}")
+            use_sudo = self.active_host.get('sudo', False)
+            full_command = command
+            if use_sudo:
+                # Prepend sudo with -S and empty prompt to suppress prompt text
+                full_command = f"sudo -S -p '' {command}"
+
+            logging.info(f"Executing command: {full_command}")
+            transport = self.ssh_client.get_transport()
+            channel = transport.open_session()
+            channel.exec_command(full_command)
+
+            out_data = ''
+            err_data = ''
+            start_time = time.time()
+            password_sent = False
+            while True:
+                if channel.recv_ready():
+                    out_chunk = channel.recv(1024).decode()
+                    out_data += out_chunk
+                if channel.recv_stderr_ready():
+                    err_chunk = channel.recv_stderr(1024).decode()
+                    err_data += err_chunk
+
+                # If sudo is used and password not sent yet, check if sudo is waiting for password
+                if use_sudo and not password_sent:
+                    # Check if channel is still open and waiting for input
+                    if not channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+                        # Send password + newline
+                        channel.send(self.active_host['password'] + '\n')
+                        password_sent = True
+
+                if channel.exit_status_ready():
+                    break
+
+                if time.time() - start_time > timeout:
+                    channel.close()
+                    raise TimeoutError(f"Command timeout: {full_command}")
+
+                time.sleep(0.1)
+
+            # Read any remaining output after exit
+            while channel.recv_ready():
+                out_data += channel.recv(1024).decode()
+            while channel.recv_stderr_ready():
+                err_data += channel.recv_stderr(1024).decode()
+
+            exit_status = channel.recv_exit_status()
+
+            if out_data:
+                logging.info(f"Command output: {out_data.strip()}")
+            if err_data:
+                logging.error(f"Command error: {err_data.strip()}")
+            if exit_status != 0:
+                raise Exception(f"Command failed: {full_command}, Exit status: {exit_status}, Error: {err_data.strip()}")
+
+            return out_data.strip()
+
+        except Exception:
+            logging.exception(f"Failed to execute command: {command}")
             raise
+
+    def scp_to_directory(self, filename, targetdir):
+        with scp.SCPClient(self.ssh_client.get_transport()) as scp_client:
+            scp_client.put(filename, f"{targetdir}/{os.path.basename(filename)}")
+            logging.info(f"Transferred {filename} to {targetdir}/")
 
     def check_distribution(self):
         try:
-            command = "uname"
-            stdin, stdout, stderr = self.ssh_client.exec_command(command)
-            os_name = stdout.read().decode().strip().lower()
-            if os_name not in supported_os:
-                logging.error(f"OS Unsupported: {os_name}")
-                print(f"OS Unsupported: {os_name}")
-                sys.exit(1)
+            logging.info(f"Checking OS")
+
+            logging.info(f"os_name: {self.active_host['os_name']}")
+            os_name = self.active_host['os_name']
+            if not any(os_name in list(os_dict.keys())[0] for os_dict in self.config["supported_os"]):
+                raise self.UnsupportedOS(f"Unsupported OS: {self.active_host['os_name']}")
+        except Exception as e:
+            logging.error(f"Error checking os: {e}")
+            raise
+        try:
             if os_name == "linux":
-                command = "grep '^ID=' /etc/os-release | awk -F= '{print $2}'"
-                stdin, stdout, stderr = self.ssh_client.exec_command(command)
-                distro = stdout.read().decode().strip().lower()
-                if distro != "ubuntu":
-                    logging.error("Distro Unsupported")
-                    print("Distro Unsupported")
-                    sys.exit(1)
+                logging.info(f"Checking Distro")
+                stdout = self.execute_command("grep '^ID=' /etc/os-release | awk -F= '{print $2}'")
+                distro = stdout.strip().lower()
+                if not any(distro in os_dict[list(os_dict.keys())[0]]["distro"] for os_dict in self.config["supported_os"] if list(os_dict.keys())[0] == "Linux"):
+                    raise self.UnsupportedDistro(f"Unsupported Distro: {distro}")
         except Exception as e:
             logging.error(f"Error checking distribution: {e}")
             raise
@@ -275,13 +329,12 @@ class NebulaDeployUtil:
     def download_file(self, url, dest):
         if os.path.exists(dest):
             logging.info(f"File already exists: {dest}. Skipping download.")
-            return  # Early return if the file exists
-
+            return 
         logging.debug(f"Starting download from {url} to {dest}...")
         try:
             import requests
             response = requests.get(url, stream=True)
-            response.raise_for_status()  # Raise an error for bad responses
+            response.raise_for_status()
             
             with open(dest, 'wb') as file:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -304,101 +357,317 @@ class NebulaDeployUtil:
             raise
         return client
 
-    def create_directories(self):
-        commands = [
-            "mkdir -p /opt/nebula/bin",
-            "mkdir -p /opt/nebula/etc"
+    def check_path_exists(self, path):
+        if not self.execute_command(f'sudo -S -p '' test -e "/tmp/nebdeploy" || true && echo exists') == "exists":
+            return False
+        return True
+
+    def generate_configs(self):
+        
+        self.configlh = copy.deepcopy(self.configyml)
+        self.confignonlh = copy.deepcopy(self.configyml)
+        lhhosts = []
+
+        for host in self.get_hosts():
+            if self.config['hosts'][host]['lighthouse']:
+                lhhosts.append(host)
+
+        self.configlh['lighthouse']['am_lighthouse'] = True
+        self.confignonlh['lighthouse']['am_lighthouse'] = False
+        self.configlh['lighthouse']['hosts'] = []
+        self.confignonlh['lighthouse']['hosts'] = []
+
+        for host in lhhosts:
+            #self.configlh['lighthouse']['hosts'].append(self.config['hosts'][host]['nebulaaddress'])
+            self.confignonlh['lighthouse']['hosts'].append(self.config['hosts'][host]['nebulaaddress'])
+            
+        static_host_map = {}
+        for host in self.get_hosts():
+            static_host_map[self.config['hosts'][host]['nebulaaddress']] = [ f"{self.config['hosts'][host]['address']}:4242"]
+            
+        self.configlh['static_host_map'] = static_host_map
+        self.confignonlh['static_host_map'] = static_host_map
+        self.configlh['firewall']['inbound'] = [
+            {
+                    'port': 22,
+                    'proto': 'tcp',
+                    'host': 'any'
+                }
+            ]
+        self.confignonlh['firewall']['inbound'] = [
+            {
+                'port': 8080,
+                'proto': 'tcp',
+                'host': 'any'        # changed from 'isilon' to 'any'
+            },
+            {
+                'port': 2049,
+                'proto': 'tcp',
+                'host': 'any'        # changed from 'isilon' to 'any'
+            },
+            {
+                'port': 2049,
+                'proto': 'udp',
+                'host': 'any'        # changed from 'isilon' to 'any'
+            },
+            {
+                'port': 22,
+                'proto': 'tcp',
+                'host': 'any'
+            }
         ]
-        self.execute_commands(commands)
+        
+        self.configlh['pki']['ca'] = '/opt/nebula/etc/ca.crt'
+        self.configlh['pki']['cert'] = '/opt/nebula/etc/host.crt'
+        self.configlh['pki']['key'] = '/opt/nebula/etc/host.key'
+        self.confignonlh['pki']['ca'] = '/opt/nebula/etc/ca.crt'
+        self.confignonlh['pki']['cert'] = '/opt/nebula/etc/host.crt'
+        self.confignonlh['pki']['key'] = '/opt/nebula/etc/host.key'
 
-    def extract_tarballs(self):
-        commands = [
-            "tar -xzf /tmp/nebula-linux-amd64.tar.gz -C /opt/nebula/bin",
-            "tar -xzf /tmp/nebula-freebsd-amd64.tar.gz -C /opt/nebula/bin"
-        ]
-        self.execute_commands(commands)
+        with open('config/config-lighthouse.yml', 'w') as f:
+            yaml.dump(self.configlh, f, default_flow_style=False)
 
-    def check_ping(self, address):
-        response = os.system(f"ping -c 1 {address}")
-        if response != 0:
-            logging.warning(f"Host {address} is not reachable.")
-            print(f"Host {address} is not reachable.")
-        else:
-            logging.info(f"Host {address} is reachable.")
-            print(f"Host {address} is reachable.")
+        with open('config/config-nonlighthouse.yml', 'w') as f:
+            yaml.dump(self.confignonlh, f, default_flow_style=False)
 
-    def deploy_rclocal(self):
-        import scp
-        with scp.SCPClient(self.ssh_client.get_transport()) as scp_client:
-            scp_client.put(os.path.join(os.getcwd(), 'payload', 'startup_rclocal.py'), '/opt/nebula/startup_rclocal.py')
-        self.execute_commands(["python3 /opt/nebula/startup_rclocal.py"])
+    def preinstall(self):
+        logging.info("Starting Preinstall Verification")
+        print("Starting Preinstall Verification", flush=True)
+        for host in self.get_hosts():
+            try:
+                self.set_active_host(host)
+                self.identify_host()
+                self.check_reachability()
+                self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
+                self.check_distribution()
+                self.check_run_as_root()
+                print("  \033[92m✔ Passed\033[0m")
+            except Exception as err:
+                logging.error(err)
+                print(err)
 
-    def distribute_certificates(self):
-        # Logic for generating and distributing certificates
-        pass
+    def install(self):
+        logging.info("Starting Host Install")
+        self.generate_configs()
 
-    def deploy_config(self, etcdir):
-        import scp
-        with scp.SCPClient(self.ssh_client.get_transport()) as scp_client:
-            scp_client.put('path/to/nebula.yml', f'{etcdir}/nebula.yml')
+        for host in self.get_hosts():
+            try:
+                if 'state' not in self.config['hosts'][host] or not self.config['hosts'][host]['state'] or self.config['hosts'][host]['state'] != "installed": 
+                    self.set_active_host(host)
+                    self.identify_host()
+                    self.check_reachability()
+                    self.check_distribution()
+                    self.check_run_as_root()
+                    self.execute_command(f"whoami")
+                    self.execute_command(f"mkdir -p {self.config['bindir']}")
+                    self.execute_command(f"chown root {self.config['bindir']}")
+                    self.execute_command(f"chmod 755 {self.config['bindir']}")
 
-    def start_nebula_service(self, address):
-        # Logic to start the Nebula service and check connectivity
-        pass
+                    self.execute_command(f"mkdir -p {self.config['etcdir']}")
+                    self.execute_command(f"chown root {self.config['etcdir']}")
+                    self.execute_command(f"chmod 700 {self.config['etcdir']}")
 
-    def validate_installation(self):
-        logging.info("Validating installation...")
-        bindir = self.config['bindir']
-        etcdir = self.config['etcdir']
+                    self.execute_command(f"mkdir -p {self.config['tmpdir']}")
+                    self.execute_command(f"chmod 777 {self.config['tmpdir']}")
 
-        def check_path(path, mode, owner):
-            if not os.path.exists(path):
-                logging.error(f"{path} does not exist.")
-                return False
-            stat_info = os.stat(path)
-            if stat_info.st_mode & 0o777 != mode:
-                logging.error(f"{path} does not have the correct permissions.")
-                return False
-            if stat_info.st_uid != 0:  # Check if owned by root (UID 0)
-                logging.error(f"{path} is not owned by root.")
-                return False
-            return True
+                    tarballname = self.transfer_tarball()
+                    
+                    self.execute_command(f"tar -xzf {self.config['tmpdir']}/{tarballname} -C {self.config['bindir']}")
 
-        # Check bindir
-        if not check_path(bindir, 0o755, 0):
-            raise Exception(f"Validation failed for bindir: {bindir}")
+                    # Generate Certificates
+                    
+                    
+                    
+                    cmd = [
+                        'bin/nebula-cert', 'sign',
+                        '-name', host,
+                        '-ip', f"{self.active_host['nebulaaddress']}/24",
+                        '-out-crt', f"certificates/{host}.crt",
+                        '-out-key', f"certificates/{host}.key",
+                        '-ca-crt', "certificates/ca.crt",
+                        '-ca-key', "certificates/ca.key"
+                    ]
 
-        # Check etcdir
-        if not check_path(etcdir, 0o755, 0):
-            raise Exception(f"Validation failed for etcdir: {etcdir}")
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        raise ErrorGeneratingHostCertificate(f"Error Generating Host Cert: {result.stdout} {result.stderr}")
+                    
+                    logging.info("Deploying Configfile")
+                    if self.active_host['lighthouse']:
+                        self.scp_to_directory(os.path.join(os.getcwd(), 'config',  'config-lighthouse.yml'), self.config['tmpdir'])
+                        self.execute_command(f"mv {self.config['tmpdir']}/config-lighthouse.yml {self.config['etcdir']}/config.yml")
+                    else:
+                        self.scp_to_directory(os.path.join(os.getcwd(), 'config',  'config-nonlighthouse.yml'), self.config['tmpdir'])
+                        self.execute_command(f"mv {self.config['tmpdir']}/config-nonlighthouse.yml {self.config['etcdir']}/config.yml")
+                    
+                    logging.info("Deploying CA Certificate")
+                    self.scp_to_directory(os.path.join(os.getcwd(), 'certificates',  'ca.crt'), self.config['tmpdir'])
+                    self.execute_command(f"mv {self.config['tmpdir']}/ca.crt {self.config['etcdir']}/ca.crt")
 
-        # Check binaries
-        binaries = [f"{bindir}/nebula", f"{bindir}/nebula-cert"]
-        for binary in binaries:
-            if not check_path(binary, 0o755, 0):
-                raise Exception(f"Validation failed for binary: {binary}")
+                    logging.info("Deploying Host Certificate")
+                    self.scp_to_directory(os.path.join(os.getcwd(), 'certificates',  f'{host}.crt'), self.config['tmpdir'])
+                    self.execute_command(f"mv {self.config['tmpdir']}/{host}.crt {self.config['etcdir']}/host.crt")
 
-        # Check config file
-        config_file = f"{etcdir}/config.yml"
-        if not check_path(config_file, 0o600, 0):
-            raise Exception(f"Validation failed for config file: {config_file}")
+                    logging.info("Deploying Host Key")
+                    self.scp_to_directory(os.path.join(os.getcwd(), 'certificates',  f'{host}.key'), self.config['tmpdir'])
+                    self.execute_command(f"mv {self.config['tmpdir']}/{host}.key {self.config['etcdir']}/host.key")
+                    
+                    self.scp_to_directory(os.path.join(os.getcwd(), 'scripts',  'startnebula.sh'), self.config['tmpdir'])
+                    self.execute_command(f"mv {self.config['tmpdir']}/startnebula.sh {self.config['bindir']}")
 
-        logging.info("Installation validation successful.")
-    
+                    self.scp_to_directory(os.path.join(os.getcwd(), 'scripts',  'stopnebula.sh'), self.config['tmpdir'])
+                    self.execute_command(f"mv {self.config['tmpdir']}/stopnebula.sh {self.config['bindir']}")
+
+                    self.execute_command(f"chown -R root:daemon {self.config['bindir']}")
+                    self.execute_command(f"chmod -R 750 {self.config['bindir']}")
+                    self.execute_command(f"chown -R root:daemon {self.config['etcdir']}")
+                    self.execute_command(f"chmod 600 {self.config['etcdir']}/ca.crt")
+                    self.execute_command(f"chmod 600 {self.config['etcdir']}/host.crt")
+                    self.execute_command(f"chmod 600 {self.config['etcdir']}/host.key")
+                    self.execute_command(f"chmod 600 {self.config['etcdir']}/config.yml")
+
+                    logging.info("Starting Nebula, logging to /tmp/nebula.log")
+                    self.execute_command(f"bash /opt/nebula/bin/startnebula.sh")
+                    
+                    #command = "/opt/nebula/bin/startnebula.sh"
+                    #print(self.execute_command(command))
+                    
+                    
+                    # if self.active_host['os_name'] == "linux" and self.check_path_exists(f"/etc/systemd"):
+                    #     logging.info("Configuring systemd")
+                    #     self.scp_to_directory(os.path.join(os.getcwd(), 'payload', 'nebula.service'), self.config['tmpdir'])
+                    #     self.execute_command(f"cp {self.config['tmpdir']}/nebula.service /etc/systemd/system")
+                    #     self.execute_command("echo systemctl daemon-reexec")
+                    #     self.execute_command("echo systemctl daemon-reload")
+                    #     self.execute_command("echo systemctl enable nebula")
+                    #     self.execute_command("echo systemctl start nebula")
+                    # else:
+                    #     logging.info("Configuring rc.local")
+                        # run rclocal setup
+                    # self.copy_to_target_location(temp_dir, self.config['etcdir'])
+                    #if temp_dir != "": self.execute_command(f"rm -rf {temp_dir}")
+                    self.set_host_status("installed")
+                    # if self.check_path_exists(self.config['tmpdir']):
+                    #     self.execute_command(f"rm -rf {self.config['tmpdir']}")
+                else:
+                    logging.info(f"Already installed {host}, skipping")
+                    print(f"Already installed {host}, skipping", flush=True)
+            except Exception as err:
+                self.set_host_status("error", str(err))
+
+            logging.info(f"Finished install of host: {host}")
+
+            print("Installed", flush=True)
+        logging.info(f"Finished install of all hosts")
+        self.write_config_to_file()
+
+    def uninstall(self):
+        for host in self.get_hosts():
+            try:
+                self.set_active_host(host)
+                self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
+                self.execute_command(f"bash /opt/nebula/bin/stopnebula.sh")
+                if self.check_path_exists(self.config['bindir']):
+                    self.execute_command(f"rm -rf {self.config['bindir']}")
+                if self.check_path_exists(self.config['etcdir']):
+                    self.execute_command(f"rm -rf {self.config['etcdir']}")
+                if self.check_path_exists(self.config['tmpdir']):
+                    self.execute_command(f"rm -rf {self.config['tmpdir']}")
+                if self.check_path_exists('/tmp/nebula.log'):
+                    self.execute_command(f"rm -f /tmp/nebula.log")
+                self.set_host_status("uninstalled")
+                print("Removed", flush=True)
+            except Exception as err:
+                self.set_host_status("error", str(err))
+
+        self.write_config_to_file()
+
+        # local cleanup
+        for dir in [ 'bin', 'certificates', 'config' ]:
+            dir = os.path.join(os.getcwd(), dir)
+            if os.path.exists(dir):
+                os.system(f'rm -rf {dir}')
+        os.system('rm -f nebula-*.tar.gz')
+    def running(self):
+        for host in self.get_hosts():
+            try:
+                
+                self.set_active_host(host)
+                self.identify_host()
+                self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
+                if self.active_host['os_name'] == "Linux":
+                    output = self.execute_command(f"ps -ef | grep /opt/nebula/bin/nebula | grep -v grep || echo ")
+                elif self.active_host['os_name'] == "Isilon OneFS":
+                    output = self.execute_command(f"ps aux| grep /opt/nebula/bin/nebula | grep -v grep || echo ")
+                if output:
+                    print(f"Running")
+                else:
+                    print("Not Running")
+            except Exception as err:
+                print(err)
+
 if __name__ == "__main__":
     deploy_util = NebulaDeployUtil('config.json')
 
     # Get arguments
     parser = argparse.ArgumentParser(description='Nebula Deployment Script')
-    parser.add_argument('--remove', action='store_true', help='Remove Nebula from all hosts')
+    parser.add_argument('-u', '--uninstall', action='store_true', help='Remove Nebula from all hosts')
+    parser.add_argument('-p', '--preinstall', action='store_true', help='Preinstall verification')
+    parser.add_argument('-r', '--running', action='store_true', help='Check to see if running')
+    parser.add_argument('-i', '--install', action='store_true', help='Check to see if running')
     args = parser.parse_args()
-    
-    # Check to make sure we have the credentials to act
+
+    set_mode(args)
+
+    # Check to make sure we have the credentials to act before starting to loop on the hosts
     deploy_util.ensure_credentials()
 
     # Determine which mode to operate in
-    if args.remove:
+    if mode == "uninstall":
         deploy_util.uninstall()
-    else:
+    elif mode == "install":
+        logging.info("Downloading binary tarballs from github")
+        urls = [
+            "https://github.com/slackhq/nebula/releases/download/v1.9.5/nebula-freebsd-amd64.tar.gz",
+            "https://github.com/slackhq/nebula/releases/download/v1.9.5/nebula-linux-amd64.tar.gz"
+        ]
+        
+        threads = []
+        for url in urls:
+            dest_path = os.path.join(os.getcwd(), os.path.basename(url))
+            download_thread = threading.Thread(target=deploy_util.download_file, args=(url, dest_path))
+            threads.append(download_thread)
+            download_thread.start()
+
+        for thread in threads:
+            thread.join()
+        logging.info("All downloads completed.")
+
+        if not os.path.exists('certificates'):
+            os.mkdir('certificates')
+        
+        host_os = subprocess.check_output(['uname']).decode().strip().lower()
+        if subprocess.check_output(['uname', '-p']).decode().strip() == "x86_64":
+            host_arch = "amd64"
+        else:
+            host_arch = subprocess.check_output(['uname', '-p']).decode().strip()
+
+        if not os.path.exists('bin'):
+            os.mkdir('bin')
+        if not os.path.exists('bin/nebula') or not os.path.exists('bin/nebula-cert'):
+            os.system(f"tar zxf nebula-{host_os}-{host_arch}.tar.gz -C bin/")
+        
+        if not os.path.exists('config'):
+            os.mkdir('config')
+
+        if not os.path.exists('certificates/ca.crt'):
+            os.system(f"bin/nebula-cert ca -name {deploy_util.config.get('organization', "demo")} -out-crt certificates/ca.crt -out-key certificates/ca.key")
+
         deploy_util.install()
-        deploy_util.validate_installation()
+    elif mode == "running":
+        deploy_util.running()
+    elif mode == "usage":
+        parser.print_usage()
+    else:
+        parser.print_usage()
+        

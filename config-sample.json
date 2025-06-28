@@ -1,12 +1,33 @@
 {
+
+    "supported_os": [
+        {
+            "linux": [
+                "amd64"
+            ]
+        },
+        {
+            "freebsd": [
+                "amd64"
+            ]
+        },
+        {
+            "Isilon Onefs": [
+                "amd64"
+            ]
+        }
+    ],
+    "supported_distros": [
+        "ubuntu"
+    ],
     "bindir": "/opt/nebula/bin",
+    "debug": false,
     "etcdir": "/opt/nebula/etc",
     "hosts": {
         "lighthouse": {
             "address": "192.168.1.100",
             "nebulaaddress": "10.10.10.10",
             "password": "SecretPass",
-            "platform": "linux",
             "startupmethod": "systemd",
             "sudo": true,
             "lighthouse": true,
@@ -16,7 +37,6 @@
             "address": "192.168.1.110",
             "nebulaaddress": "10.10.10.20",
             "password": "SecretPass",
-            "platform": "linux",
             "startupmethod": "systemd",
             "sudo": true,
             "lighthouse": false,
@@ -26,7 +46,6 @@
             "address": "192.168.1.120",
             "nebulaaddress": "10.10.10.30",
             "password": "SecretPass",
-            "platform": "linux",
             "startupmethod": "systemd",
             "sudo": true,
             "lighthouse": false,
