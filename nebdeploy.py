@@ -398,6 +398,10 @@ class NebulaDeployUtil:
                     'port': 22,
                     'proto': 'tcp',
                     'host': 'any'
+                },
+                {
+                    'proto': 'icmp',
+                    'host': 'any'
                 }
             ]
         self.confignonlh['firewall']['inbound'] = [
@@ -420,6 +424,10 @@ class NebulaDeployUtil:
                 'port': 22,
                 'proto': 'tcp',
                 'host': 'any'
+            },
+            {
+                    'proto': 'icmp',
+                    'host': 'any'
             }
         ]
         
