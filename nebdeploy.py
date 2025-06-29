@@ -481,7 +481,7 @@ class NebulaDeployUtil:
     def install(self):
         self.configyml = self.download_config()
         logging.info("Default configuration downloaded successfully.")
-        
+
         logging.info("Starting Host Install")
         self.generate_configs()
 
@@ -564,26 +564,8 @@ class NebulaDeployUtil:
                     logging.info("Starting Nebula, logging to /tmp/nebula.log")
                     self.execute_command(f"bash /opt/nebula/bin/startnebula.sh")
                     
-                    #command = "/opt/nebula/bin/startnebula.sh"
-                    #print(self.execute_command(command))
-                    
-                    
-                    # if self.active_host['os_name'] == "linux" and self.check_path_exists(f"/etc/systemd"):
-                    #     logging.info("Configuring systemd")
-                    #     self.scp_to_directory(os.path.join(os.getcwd(), 'payload', 'nebula.service'), self.config['tmpdir'])
-                    #     self.execute_command(f"cp {self.config['tmpdir']}/nebula.service /etc/systemd/system")
-                    #     self.execute_command("echo systemctl daemon-reexec")
-                    #     self.execute_command("echo systemctl daemon-reload")
-                    #     self.execute_command("echo systemctl enable nebula")
-                    #     self.execute_command("echo systemctl start nebula")
-                    # else:
-                    #     logging.info("Configuring rc.local")
-                        # run rclocal setup
-                    # self.copy_to_target_location(temp_dir, self.config['etcdir'])
-                    #if temp_dir != "": self.execute_command(f"rm -rf {temp_dir}")
                     self.set_host_status("installed")
-                    # if self.check_path_exists(self.config['tmpdir']):
-                    #     self.execute_command(f"rm -rf {self.config['tmpdir']}")
+
                 else:
                     logging.info(f"Already installed {host}, skipping")
                     print(f"Already installed {host}, skipping", flush=True)
@@ -724,6 +706,8 @@ if __name__ == "__main__":
         down_hosts = [host for host, status in results.items() if status == 'down']
         if not down_hosts:
             print("All Mesh Hosts Reachable")
+        else:
+            print("Unreachable Hosts:", ', '.join(down_hosts))
     else:
         parser.print_usage()
         
