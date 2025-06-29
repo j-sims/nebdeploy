@@ -369,16 +369,6 @@ class NebulaDeployUtil:
             return False
         return True
 
-    def post_install_verify(self):
-        for host in self.get_hosts():
-            try:
-                self.set_active_host(host)
-                self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
-                for h in self.config['hosts']:
-                    self.execute_command(f"ping -c1 -W1 {self.config['hosts'][h]['nebulaaddress']} && echo {self.config['hosts'][h]['nebulaaddress']} up")
-            except Exception as err:
-                print(err)
-
     def generate_configs(self):
         
         self.configlh = copy.deepcopy(self.configyml)
@@ -456,6 +446,19 @@ class NebulaDeployUtil:
 
         with open('config/config-nonlighthouse.yml', 'w') as f:
             yaml.dump(self.confignonlh, f, default_flow_style=False)
+
+    def ping_mesh():
+        host_list = []
+        for host in self.config['hosts']:
+            host_list.append(self.config['hosts'][host]['nebulaaddress'])
+        results = {}
+        for host in host_list:
+            try:
+                subprocess.run(['ping', '-c', '1', '-W', '1', host], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                results[host] = 'up'
+            except subprocess.CalledProcessError:
+                results[host] = 'down'
+        return results
 
     def preinstall(self):
         logging.info("Starting Preinstall Verification")
@@ -617,6 +620,7 @@ class NebulaDeployUtil:
             if os.path.exists(dir):
                 os.system(f'rm -rf {dir}')
         os.system('rm -f nebula-*.tar.gz')
+
     def running(self):
         for host in self.get_hosts():
             try:
@@ -694,7 +698,13 @@ if __name__ == "__main__":
             os.system(f"bin/nebula-cert ca -name {org} -out-crt certificates/ca.crt -out-key certificates/ca.key")
 
         deploy_util.install()
-        deploy_util.post_install_verify()
+        
+        results = deploy_util.ping_mesh()
+        down_hosts = [host for host, status in results.items() if status == 'down']
+        if not down_hosts:
+            print("All Mesh Hosts Reachable")
+        else:
+            print("Unreachable Hosts:", ', '.join(down_hosts))
     elif mode == "running":
         deploy_util.running()
     elif mode == "usage":
