@@ -400,6 +400,7 @@ class NebulaDeployUtil:
                     'host': 'any'
                 },
                 {
+                    'port': 'any',
                     'proto': 'icmp',
                     'host': 'any'
                 }
@@ -426,6 +427,7 @@ class NebulaDeployUtil:
                 'host': 'any'
             },
             {
+                    'port': 'any',
                     'proto': 'icmp',
                     'host': 'any'
             }
