@@ -152,20 +152,22 @@ class NebulaDeployUtil:
             print("pip3 not installed")
             sys.exit(1)
         logging.debug("Checking and installing required modules...")
+        max_retries = 3
         for module in required_modules:
-            try:
-                globals()[module] = __import__(module)
-                logging.info(f"{module} is already installed.")
-            except ImportError:
-                logging.warning(f"{module} not found. Installing...")
-                subprocess.check_call([sys.executable, '-m', 'pip', 'install', module])
-                logging.info(f"{module} installed successfully.")
+            for attempt in range(max_retries):
                 try:
                     globals()[module] = __import__(module)
+                    logging.info(f"{module} is already installed.")
+                    break
                 except ImportError:
-                    logging.error(f"Failed to import {module} after install")
-                    print(f"Failed to import {module} after install")
-                    sys.exit(1)
+                    logging.warning(f"{module} not found. Installing...")
+                    subprocess.check_call([sys.executable, '-m', 'pip', 'install', module])
+                    logging.info(f"{module} installed successfully.")
+                    continue
+            else:
+                logging.error(f"Failed to import {module} after {max_retries} attempts")
+                print(f"Failed to import {module} after {max_retries} attempts")
+                sys.exit(1)
 
     def ensure_credentials(self):
         for host in self.get_hosts():
