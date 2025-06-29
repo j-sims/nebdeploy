@@ -75,7 +75,7 @@ class NebulaDeployUtil:
             logging.getLogger().setLevel(logging.DEBUG)
             logging.debug("Debug logging enabled.")
 
-        self.configyml = self.download_config()
+        self.configyml = None
         logging.info("Default configuration downloaded successfully.")
 
         self.active_host = {}
@@ -479,6 +479,9 @@ class NebulaDeployUtil:
                 print(err)
 
     def install(self):
+        self.configyml = self.download_config()
+        logging.info("Default configuration downloaded successfully.")
+        
         logging.info("Starting Host Install")
         self.generate_configs()
 
