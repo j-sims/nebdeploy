@@ -585,10 +585,13 @@ class NebulaDeployUtil:
                 if self.check_path_exists("/opt/nebula/bin/stopnebula.sh"):
                     self.execute_command(f"bash /opt/nebula/bin/stopnebula.sh")
                 time.sleep(2)
+                ## TODO: Add safety check to make sure the user didn't set to a system dir like /usr/bin
                 if self.check_path_exists(self.config['bindir']):
                     self.execute_command(f"rm -rf {self.config['bindir']}")
                 if self.check_path_exists(self.config['etcdir']):
                     self.execute_command(f"rm -rf {self.config['etcdir']}")
+                if self.check_path_exists("/opt/nebula"):
+                    self.execute_command(f"rm -rf /opt/nebula")
                 if self.check_path_exists(self.config['tmpdir']):
                     self.execute_command(f"rm -rf {self.config['tmpdir']}")
                 if self.check_path_exists('/tmp/nebula.log'):
