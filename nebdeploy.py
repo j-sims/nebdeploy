@@ -76,7 +76,6 @@ class NebulaDeployUtil:
             logging.debug("Debug logging enabled.")
 
         self.configyml = None
-        logging.info("Default configuration downloaded successfully.")
 
         self.active_host = {}
         self.ssh_client = None 
