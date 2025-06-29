@@ -372,10 +372,10 @@ class NebulaDeployUtil:
     def post_install_verify(self):
         for host in self.get_hosts():
             try:
-                if 'state' not in self.config['hosts'][host] or not self.config['hosts'][host]['state'] or self.config['hosts'][host]['state'] != "installed": 
-                    self.set_active_host(host)
-                    for h in self.config['hosts']:
-                        self.execute_command(f"ping -c1 -W1 {h['nebulaaddress']} && echo {h['nebulaaddress']} up")
+                self.set_active_host(host)
+                self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
+                for h in self.config['hosts']:
+                    self.execute_command(f"ping -c1 -W1 {h['nebulaaddress']} && echo {h['nebulaaddress']} up")
             except Exception as err:
                 print(err)
 
