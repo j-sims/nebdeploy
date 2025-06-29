@@ -583,7 +583,8 @@ class NebulaDeployUtil:
             try:
                 self.set_active_host(host)
                 self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
-                self.execute_command(f"bash /opt/nebula/bin/stopnebula.sh")
+                if self.check_path_exists("/opt/nebula/bin/stopnebula.sh"):
+                    self.execute_command(f"bash /opt/nebula/bin/stopnebula.sh")
                 time.sleep(2)
                 if self.check_path_exists(self.config['bindir']):
                     self.execute_command(f"rm -rf {self.config['bindir']}")
