@@ -158,12 +158,12 @@ class NebulaDeployUtil:
             for attempt in range(max_retries):
                 try:
                     globals()[module] = __import__(module)
-                    logging.info(f"{module} is already installed.")
+                    logging.debug(f"{module} is already installed.")
                     break
                 except ImportError:
                     logging.warning(f"{module} not found. Installing...")
                     subprocess.check_call([sys.executable, '-m', 'pip', 'install', module])
-                    logging.info(f"{module} installed successfully.")
+                    logging.debug(f"{module} installed successfully.")
                     continue
             else:
                 logging.error(f"Failed to import {module} after {max_retries} attempts")
