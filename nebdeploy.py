@@ -369,6 +369,16 @@ class NebulaDeployUtil:
             return False
         return True
 
+    def post_install_verify(self):
+        for host in self.get_hosts():
+            try:
+                if 'state' not in self.config['hosts'][host] or not self.config['hosts'][host]['state'] or self.config['hosts'][host]['state'] != "installed": 
+                    self.set_active_host(host)
+                    for h in self.config['hosts']:
+                        self.execute_command(f"ping -c1 -W1 {h['nebulaaddress']} && echo {h['nebulaaddress']} up")
+            except Exception as err:
+                print(err)
+
     def generate_configs(self):
         
         self.configlh = copy.deepcopy(self.configyml)
@@ -684,6 +694,7 @@ if __name__ == "__main__":
             os.system(f"bin/nebula-cert ca -name {org} -out-crt certificates/ca.crt -out-key certificates/ca.key")
 
         deploy_util.install()
+        deploy_util.post_install_verify()
     elif mode == "running":
         deploy_util.running()
     elif mode == "usage":
