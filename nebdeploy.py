@@ -147,7 +147,7 @@ class NebulaDeployUtil:
             os.execv(venv_python, [venv_python] + sys.argv)
 
     def check_and_install_modules(self):
-        if not os.system("pip3 --version > /dev/null 2>&1"):
+        if os.system("pip3 --version > /dev/null 2>&1"):
             logging.error("pip3 not installed")
             print("pip3 not installed")
             sys.exit(1)
