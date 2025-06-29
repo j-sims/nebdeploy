@@ -2,6 +2,9 @@
 
 nebdeploy is a script to download and deploy Nebula on Linux and FreeBSD based systems.
 
+### Warning - Use At Your Own Risk
+This is remote execution lab intended only for use in a lab and should not be used in a production environment as there is a risk of dataloss.
+
 ## Usage
 
 ### Install
