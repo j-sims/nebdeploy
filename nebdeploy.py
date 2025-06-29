@@ -364,7 +364,7 @@ class NebulaDeployUtil:
         return client
 
     def check_path_exists(self, path):
-        if not self.execute_command(f'sudo -S -p '' test -e "/tmp/nebdeploy" || true && echo exists') == "exists":
+        if not self.execute_command(f'sudo -S -p '' test -e "{path}" || true && echo exists') == "exists":
             return False
         return True
 
