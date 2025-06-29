@@ -661,7 +661,8 @@ if __name__ == "__main__":
             os.mkdir('config')
 
         if not os.path.exists('certificates/ca.crt'):
-            os.system(f"bin/nebula-cert ca -name {deploy_util.config.get('organization', "demo")} -out-crt certificates/ca.crt -out-key certificates/ca.key")
+            org = deploy_util.config.get('organization', "demo")
+            os.system(f"bin/nebula-cert ca -name {org} -out-crt certificates/ca.crt -out-key certificates/ca.key")
 
         deploy_util.install()
     elif mode == "running":
