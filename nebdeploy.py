@@ -32,6 +32,8 @@ def set_mode(args):
         mode = "running"
     elif args.install:
         mode = "install"
+    elif args.verify:
+        mode = "verify"
     else:
         mode = "usage"
     
@@ -447,7 +449,7 @@ class NebulaDeployUtil:
         with open('config/config-nonlighthouse.yml', 'w') as f:
             yaml.dump(self.confignonlh, f, default_flow_style=False)
 
-    def ping_mesh():
+    def ping_mesh(self):
         host_list = []
         for host in self.config['hosts']:
             host_list.append(self.config['hosts'][host]['nebulaaddress'])
@@ -647,7 +649,8 @@ if __name__ == "__main__":
     parser.add_argument('-u', '--uninstall', action='store_true', help='Remove Nebula from all hosts')
     parser.add_argument('-p', '--preinstall', action='store_true', help='Preinstall verification')
     parser.add_argument('-r', '--running', action='store_true', help='Check to see if running')
-    parser.add_argument('-i', '--install', action='store_true', help='Check to see if running')
+    parser.add_argument('-i', '--install', action='store_true', help='Install')
+    parser.add_argument('-v', '--verify', action='store_true', help='verify pingable')
     args = parser.parse_args()
 
     set_mode(args)
@@ -709,6 +712,11 @@ if __name__ == "__main__":
         deploy_util.running()
     elif mode == "usage":
         parser.print_usage()
+    elif mode == "verify":
+        results = deploy_util.ping_mesh()
+        down_hosts = [host for host, status in results.items() if status == 'down']
+        if not down_hosts:
+            print("All Mesh Hosts Reachable")
     else:
         parser.print_usage()
         
