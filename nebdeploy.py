@@ -375,7 +375,7 @@ class NebulaDeployUtil:
                 self.set_active_host(host)
                 self.ssh_client = self.create_ssh_client(self.active_host['address'], 22, self.active_host['username'], self.active_host['password'])
                 for h in self.config['hosts']:
-                    self.execute_command(f"ping -c1 -W1 {h['nebulaaddress']} && echo {h['nebulaaddress']} up")
+                    self.execute_command(f"ping -c1 -W1 {self.config['hosts'][h]['nebulaaddress']} && echo {self.config['hosts'][h]['nebulaaddress']} up")
             except Exception as err:
                 print(err)
 
