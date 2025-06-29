@@ -653,6 +653,10 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--verify', action='store_true', help='verify pingable')
     args = parser.parse_args()
 
+    # Ensure only one argument is passed at a time
+    if sum([args.uninstall, args.preinstall, args.running, args.install, args.verify]) > 1:
+        parser.error("Only one of -u, -p, -r, -i, or -v can be specified at a time.")
+
     set_mode(args)
 
     # Check to make sure we have the credentials to act before starting to loop on the hosts
@@ -701,7 +705,7 @@ if __name__ == "__main__":
             os.system(f"bin/nebula-cert ca -name {org} -out-crt certificates/ca.crt -out-key certificates/ca.key")
 
         deploy_util.install()
-        
+        time.sleep(3)
         results = deploy_util.ping_mesh()
         down_hosts = [host for host, status in results.items() if status == 'down']
         if not down_hosts:
